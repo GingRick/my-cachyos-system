@@ -28,3 +28,50 @@ This ensures that there is always a verifiable, stable fallback stored securely 
    ```
 
 *Note: The script tracks its execution state in `~/.local/state/cachyos_maintenance.state` to ensure tasks are only run when due (Weekly, Monthly, Bi-annually).*
+
+## System Recovery Procedure (Fresh Install)
+
+If your system experiences a catastrophic failure requiring a fresh installation of CachyOS, you can use the archived state backed up in this repository (`snapshot_backup.tar.zst`) to quickly restore your configurations and reinstall your software packages.
+
+### 1. Install CachyOS
+Perform a standard fresh installation of CachyOS using a live USB. Ensure you match your previous filesystem choices (e.g., BTRFS) if your restored `/etc/fstab` will depend on it.
+
+### 2. Clone This Repository
+Once booted into your fresh CachyOS installation, clone this repository:
+```bash
+git clone https://github.com/GingRick/my-cachyos-system.git
+cd my-cachyos-system
+```
+
+### 3. Restore System Configurations
+Extract the backed-up configurations (`/etc` and `/root/.config`) directly into the root directory. 
+*⚠️ **Warning:** This will overwrite default configurations of the fresh install with your previous custom configurations.*
+
+```bash
+sudo tar -I "zstd" -xpf snapshot_backup.tar.zst -C / etc root/.config
+```
+
+### 4. Reinstall Previous Packages
+To seamlessly reinstall the exact list of packages you had previously, we will extract the old pacman database to a temporary directory, query it for your installed packages, and feed that list to your AUR helper.
+
+First, extract the backed-up pacman local database:
+```bash
+mkdir -p /tmp/pacman-backup
+tar -I "zstd" -xpf snapshot_backup.tar.zst -C /tmp/pacman-backup var/lib/pacman/local
+```
+
+Next, generate a list of explicitly installed packages from the backup database:
+```bash
+pacman -Qqe -b /tmp/pacman-backup/var/lib/pacman > recovered_packages.txt
+```
+
+Finally, feed this list to `paru` (or `yay`/`pacman`) to download and install them:
+```bash
+paru -S --needed - < recovered_packages.txt
+```
+
+### 5. Finalize and Reboot
+After all packages have finished installing:
+1. Double-check for any mismatched configuration files by running `sudo pacdiff`.
+2. Re-enable any custom systemd services you had running.
+3. Reboot your system to apply all restored configurations and software.
