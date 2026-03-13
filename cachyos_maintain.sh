@@ -58,12 +58,13 @@ else
 
          echo "Generating snapshot details..."
          # Generate info using host tools pointing to the snapshot DB to avoid chroot read-only and missing mount errors
-         sudo bash -c "
-            echo '--- Snapshot $LATEST_SNAP Details ---' > '$SNAPSHOT_INFO'
-            echo 'Date: \$(date)' >> '$SNAPSHOT_INFO'
-            echo 'Kernel: \$(uname -r)' >> '$SNAPSHOT_INFO'
-            echo 'Installed Packages Count: \$(pacman -Qq -b \"$SNAP_DIR/var/lib/pacman\" 2>/dev/null | wc -l)' >> '$SNAPSHOT_INFO'
-         "
+         # We must NOT use quotes around EOF so that command substitution happens during the creation of the file
+         sudo bash -c "cat << EOF > '$SNAPSHOT_INFO'
+--- Snapshot $LATEST_SNAP Details ---
+Date: \$(date)
+Kernel: \$(uname -r)
+Installed Packages Count: \$(pacman -Qq -b \"$SNAP_DIR/var/lib/pacman\" 2>/dev/null | wc -l)
+EOF"
          sudo chown "$USER:$USER" "$SNAPSHOT_INFO"
          
          # Note: A full root filesystem tarball will be HUGE (often 10-30GB+ compressed). 
