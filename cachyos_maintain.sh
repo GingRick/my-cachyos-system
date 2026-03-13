@@ -52,8 +52,8 @@ else
          
          # Determine repo path relative to this script
          REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-         BACKUP_ARCHIVE="$REPO_DIR/snapshot_backup.tar.zst"
-         SNAPSHOT_INFO="$REPO_DIR/snapshot_info.txt"
+         BACKUP_ARCHIVE="$REPO_DIR/backups/snapshot_backup.tar.zst"
+         SNAPSHOT_INFO="$REPO_DIR/backups/snapshot_info.txt"
 
          echo "Generating snapshot details..."
          # Run these inside the snapshot to get accurate info of the *snapshotted* state
@@ -80,7 +80,7 @@ else
          
          echo "Committing and pushing to Git..."
          cd "$REPO_DIR" || exit 1
-         git add snapshot_backup.tar.zst snapshot_info.txt
+         git add backups/snapshot_backup.tar.zst backups/snapshot_info.txt
          
          # Only commit if there are changes
          if git diff --staged --quiet; then
@@ -88,7 +88,7 @@ else
          else
              git commit -m "chore(backup): System state snapshot #$LATEST_SNAP
 
-$(cat snapshot_info.txt | head -n 4)"
+$(cat backups/snapshot_info.txt | head -n 4)"
              git push
              echo "✅ Snapshot backup pushed to repository."
          fi

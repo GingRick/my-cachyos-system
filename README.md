@@ -31,7 +31,7 @@ This ensures that there is always a verifiable, stable fallback stored securely 
 
 ## System Recovery Procedure (Fresh Install)
 
-If your system experiences a catastrophic failure requiring a fresh installation of CachyOS, you can use the archived state backed up in this repository (`snapshot_backup.tar.zst`) to quickly restore your configurations and reinstall your software packages.
+If your system experiences a catastrophic failure requiring a fresh installation of CachyOS, you can use the archived state backed up in this repository (`backups/snapshot_backup.tar.zst`) to quickly restore your configurations and reinstall your software packages.
 
 ### 1. Install CachyOS
 Perform a standard fresh installation of CachyOS using a live USB. Ensure you match your previous filesystem choices (e.g., BTRFS) if your restored `/etc/fstab` will depend on it.
@@ -48,7 +48,7 @@ Extract the backed-up configurations (`/etc` and `/root/.config`) directly into 
 *⚠️ **Warning:** This will overwrite default configurations of the fresh install with your previous custom configurations.*
 
 ```bash
-sudo tar -I "zstd" -xpf snapshot_backup.tar.zst -C / etc root/.config
+sudo tar -I "zstd" -xpf backups/snapshot_backup.tar.zst -C / etc root/.config
 ```
 
 ### 4. Reinstall Previous Packages
@@ -57,7 +57,7 @@ To seamlessly reinstall the exact list of packages you had previously, we will e
 First, extract the backed-up pacman local database:
 ```bash
 mkdir -p /tmp/pacman-backup
-tar -I "zstd" -xpf snapshot_backup.tar.zst -C /tmp/pacman-backup var/lib/pacman/local
+tar -I "zstd" -xpf backups/snapshot_backup.tar.zst -C /tmp/pacman-backup var/lib/pacman/local
 ```
 
 Next, generate a list of explicitly installed packages from the backup database:
