@@ -18,6 +18,11 @@ Before any maintenance tasks are executed, the script performs a critical backup
 
 This ensures that there is always a verifiable, stable fallback stored securely off-system *before* any potentially risky updates or maintenance are performed.
 
+### Execution State & Granular Tracking
+The script intelligently tracks the last execution time of every individual task (e.g., updates, orphan removal, cache cleaning). If you skip a prompt (by pressing 'N'), the script intentionally leaves that task marked as "pending" so it will prompt you again the next time it runs. 
+
+The current state of your system's maintenance is saved directly within this repository in the `.state/cachyos_maintenance.state` file and is automatically committed after successful runs.
+
 ### How to use:
 
 1. Clone the repository to your system.
@@ -27,7 +32,10 @@ This ensures that there is always a verifiable, stable fallback stored securely 
    ./cachyos_maintain.sh
    ```
 
-*Note: The script tracks its execution state in `~/.local/state/cachyos_maintenance.state` to ensure tasks are only run when due (Weekly, Monthly, Bi-annually).*
+**Force Mode:** To bypass all time schedules and forcefully run every maintenance check, use the `--force` flag:
+```bash
+./cachyos_maintain.sh --force
+```
 
 ## System Recovery Procedure (Fresh Install)
 
@@ -44,11 +52,11 @@ cd my-cachyos-system
 ```
 
 ### 3. Restore System Configurations
-Extract the backed-up configurations (`/etc` and `/root/.config`) directly into the root directory. 
+Extract the backed-up configurations (`/etc` and `/var/lib/pacman/local`) directly into the root directory. 
 *⚠️ **Warning:** This will overwrite default configurations of the fresh install with your previous custom configurations.*
 
 ```bash
-sudo tar -I "zstd" -xpf backups/snapshot_backup.tar.zst -C / etc root/.config
+sudo tar -I "zstd" -xpf backups/snapshot_backup.tar.zst -C / etc var/lib/pacman/local
 ```
 
 ### 4. Reinstall Previous Packages
