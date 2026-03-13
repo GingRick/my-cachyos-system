@@ -1,0 +1,4 @@
+--- Snapshot 29 Details ---
+Date: $(date)
+Kernel: $(uname -r)
+Installed Packages Count: $(pacman -Qq -b "/.snapshots/29/snapshot/var/lib/pacman" 2>/dev/null | wc -l)
