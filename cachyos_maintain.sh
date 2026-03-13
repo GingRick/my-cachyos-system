@@ -45,7 +45,8 @@ if [ -z "$LATEST_SNAP" ]; then
     echo "⚠️  No suitable snapper snapshots found to backup."
 else
     SNAP_DIR="/.snapshots/$LATEST_SNAP/snapshot"
-    if [ ! -d "$SNAP_DIR" ]; then
+    # We must use sudo to check if the directory exists because /.snapshots is restricted to root
+    if ! sudo test -d "$SNAP_DIR"; then
          echo "⚠️  Snapshot directory $SNAP_DIR not found. Skipping backup."
     else
          echo "Found latest snapshot: #$LATEST_SNAP"
