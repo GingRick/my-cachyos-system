@@ -57,16 +57,13 @@ else
          SNAPSHOT_INFO="$REPO_DIR/backups/snapshot_info.txt"
 
          echo "Generating snapshot details..."
-         # Run these inside the snapshot to get accurate info of the *snapshotted* state
-         sudo chroot "$SNAP_DIR" bash -c '
-            echo "--- Snapshot $1 Details ---" > /tmp/snap_info
-            echo "Date: $(date)" >> /tmp/snap_info
-            echo "Kernel: $(uname -r)" >> /tmp/snap_info
-            echo "Installed Packages Count: $(pacman -Qq | wc -l)" >> /tmp/snap_info
-            echo "--- Top 10 Largest Packages ---" >> /tmp/snap_info
-            expac -H M "%m\t%n" | sort -h | tail -n 10 >> /tmp/snap_info
-         ' _ "$LATEST_SNAP"
-         sudo mv "$SNAP_DIR/tmp/snap_info" "$SNAPSHOT_INFO"
+         # Generate info using host tools pointing to the snapshot DB to avoid chroot read-only and missing mount errors
+         sudo bash -c "
+            echo '--- Snapshot $LATEST_SNAP Details ---' > '$SNAPSHOT_INFO'
+            echo 'Date: \$(date)' >> '$SNAPSHOT_INFO'
+            echo 'Kernel: \$(uname -r)' >> '$SNAPSHOT_INFO'
+            echo 'Installed Packages Count: \$(pacman -Qq -b \"$SNAP_DIR/var/lib/pacman\" 2>/dev/null | wc -l)' >> '$SNAPSHOT_INFO'
+         "
          sudo chown "$USER:$USER" "$SNAPSHOT_INFO"
          
          # Note: A full root filesystem tarball will be HUGE (often 10-30GB+ compressed). 
@@ -76,7 +73,8 @@ else
          # which is highly useful for restoration and fits comfortably in git.
          
          echo "Creating compressed archive of critical system state (/etc, pacman db)..."
-         sudo tar -I "zstd -1" -cpf "$BACKUP_ARCHIVE" -C "$SNAP_DIR" etc var/lib/pacman/local root/.config
+         # We omit root/.config because it might not exist and causes tar to fail
+         sudo tar -I "zstd -1" -cpf "$BACKUP_ARCHIVE" -C "$SNAP_DIR" etc var/lib/pacman/local
          sudo chown "$USER:$USER" "$BACKUP_ARCHIVE"
          
          echo "Committing and pushing to Git..."
