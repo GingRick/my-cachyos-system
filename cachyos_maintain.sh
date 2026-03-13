@@ -1,10 +1,13 @@
 #!/bin/bash
 
 # CachyOS Maintenance Automator
-# This script tracks the last time maintenance tasks were run
+# This script tracks the last time individual maintenance tasks were run
 # and only executes them if they are due based on the recommended schedule.
 
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}"
+# Determine repo path relative to this script
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+
+STATE_DIR="$REPO_DIR/.state"
 STATE_FILE="$STATE_DIR/cachyos_maintenance.state"
 
 # Ensure state directory exists
@@ -18,14 +21,38 @@ CURRENT_TIME=$(date +%s)
 DAY_IN_SEC=$((24 * 60 * 60))
 
 # Defaults if not set (0 means it will run immediately the first time)
-LAST_WEEKLY=${LAST_WEEKLY:-0}
-LAST_MONTHLY=${LAST_MONTHLY:-0}
-LAST_BIANNUAL=${LAST_BIANNUAL:-0}
+LAST_SYSTEM_UPDATE=${LAST_SYSTEM_UPDATE:-0}
+LAST_ORPHAN_CLEAN=${LAST_ORPHAN_CLEAN:-0}
+LAST_CACHE_CLEAN=${LAST_CACHE_CLEAN:-0}
+LAST_JOURNAL_CLEAN=${LAST_JOURNAL_CLEAN:-0}
+LAST_PACNEW_MERGE=${LAST_PACNEW_MERGE:-0}
+LAST_MIRROR_UPDATE=${LAST_MIRROR_UPDATE:-0}
+LAST_BTRFS_SCRUB=${LAST_BTRFS_SCRUB:-0}
+
+# Parse flags
+FORCE_MODE=false
+if [[ "$1" == "--force" ]]; then
+    FORCE_MODE=true
+    echo "⚠️  FORCE MODE ACTIVE: Bypassing time checks and running all tasks."
+fi
 
 save_state() {
-    echo "LAST_WEEKLY=$LAST_WEEKLY" > "$STATE_FILE"
-    echo "LAST_MONTHLY=$LAST_MONTHLY" >> "$STATE_FILE"
-    echo "LAST_BIANNUAL=$LAST_BIANNUAL" >> "$STATE_FILE"
+    echo "LAST_SYSTEM_UPDATE=$LAST_SYSTEM_UPDATE" > "$STATE_FILE"
+    echo "LAST_ORPHAN_CLEAN=$LAST_ORPHAN_CLEAN" >> "$STATE_FILE"
+    echo "LAST_CACHE_CLEAN=$LAST_CACHE_CLEAN" >> "$STATE_FILE"
+    echo "LAST_JOURNAL_CLEAN=$LAST_JOURNAL_CLEAN" >> "$STATE_FILE"
+    echo "LAST_PACNEW_MERGE=$LAST_PACNEW_MERGE" >> "$STATE_FILE"
+    echo "LAST_MIRROR_UPDATE=$LAST_MIRROR_UPDATE" >> "$STATE_FILE"
+    echo "LAST_BTRFS_SCRUB=$LAST_BTRFS_SCRUB" >> "$STATE_FILE"
+    
+    # Auto-commit state file to git if running inside the repo
+    cd "$REPO_DIR" || return
+    if ! git diff --quiet "$STATE_FILE"; then
+        git add "$STATE_FILE"
+        git commit -m "chore(state): update maintenance timestamps" > /dev/null 2>&1
+        git push > /dev/null 2>&1
+        echo "✅ State successfully synced to remote repository."
+    fi
 }
 
 echo "Starting CachyOS Maintenance Check..."
@@ -51,8 +78,6 @@ else
     else
          echo "Found latest snapshot: #$LATEST_SNAP"
          
-         # Determine repo path relative to this script
-         REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
          BACKUP_ARCHIVE="$REPO_DIR/backups/snapshot_backup.tar.zst"
          SNAPSHOT_INFO="$REPO_DIR/backups/snapshot_info.txt"
 
@@ -67,18 +92,12 @@ Installed Packages Count: \$(pacman -Qq -b \"$SNAP_DIR/var/lib/pacman\" 2>/dev/n
 EOF"
          sudo chown "$USER:$USER" "$SNAPSHOT_INFO"
          
-         # Note: A full root filesystem tarball will be HUGE (often 10-30GB+ compressed). 
-         # GitHub has a strict 100MB file limit per file, and a soft ~1GB repo limit.
-         # Pushing a full root backup to a standard git repo will fail.
-         # We will create an informational backup of /etc and /var/lib/pacman/local (installed package list)
-         # which is highly useful for restoration and fits comfortably in git.
-         
          echo "Creating compressed archive of critical system state (/etc, pacman db)..."
          # We omit root/.config because it might not exist and causes tar to fail
          sudo tar -I "zstd -1" -cpf "$BACKUP_ARCHIVE" -C "$SNAP_DIR" etc var/lib/pacman/local
          sudo chown "$USER:$USER" "$BACKUP_ARCHIVE"
          
-         echo "Committing and pushing to Git..."
+         echo "Committing and pushing backup to Git..."
          cd "$REPO_DIR" || exit 1
          git add backups/snapshot_backup.tar.zst backups/snapshot_info.txt
          
@@ -88,21 +107,23 @@ EOF"
          else
              git commit -m "chore(backup): System state snapshot #$LATEST_SNAP
 
-$(cat backups/snapshot_info.txt | head -n 4)"
-             git push
+$(cat backups/snapshot_info.txt | head -n 4)" > /dev/null 2>&1
+             git push > /dev/null 2>&1
              echo "✅ Snapshot backup pushed to repository."
          fi
     fi
 fi
 echo ""
 
-# --- WEEKLY TASKS (Every 7 days) ---
-if (( CURRENT_TIME - LAST_WEEKLY > 7 * DAY_IN_SEC )); then
-    echo "========================================="
-    echo " Running WEEKLY Maintenance Tasks..."
-    echo "========================================="
-    
-    echo -e "\n[1/2] Updating System..."
+echo "========================================="
+echo " Maintenance Tasks"
+echo "========================================="
+
+STATE_CHANGED=false
+
+# --- 1. SYSTEM UPDATE (Weekly) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_SYSTEM_UPDATE > 7 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Updating System..."
     if command -v paru &> /dev/null; then
         paru -Syu
     elif command -v yay &> /dev/null; then
@@ -110,8 +131,20 @@ if (( CURRENT_TIME - LAST_WEEKLY > 7 * DAY_IN_SEC )); then
     else
         sudo pacman -Syu
     fi
+    # Only mark as done if the command succeeded
+    if [ $? -eq 0 ]; then
+        LAST_SYSTEM_UPDATE=$CURRENT_TIME
+        STATE_CHANGED=true
+        echo "✅ System Update complete."
+    fi
+else
+    DAYS_LEFT=$(( 7 - (CURRENT_TIME - LAST_SYSTEM_UPDATE) / DAY_IN_SEC ))
+    echo "⏭️ System Update is up to date. (Next run in ~$DAYS_LEFT days)"
+fi
 
-    echo -e "\n[2/2] Checking for orphaned packages..."
+# --- 2. ORPHAN CLEANUP (Weekly) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_ORPHAN_CLEAN > 7 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Checking for orphaned packages..."
     ORPHANS=$(pacman -Qtdq)
     if [ -n "$ORPHANS" ]; then
         echo "Found orphaned packages:"
@@ -120,44 +153,71 @@ if (( CURRENT_TIME - LAST_WEEKLY > 7 * DAY_IN_SEC )); then
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             sudo pacman -Rns $ORPHANS
+            if [ $? -eq 0 ]; then
+                LAST_ORPHAN_CLEAN=$CURRENT_TIME
+                STATE_CHANGED=true
+                echo "✅ Orphans removed."
+            fi
+        else
+            echo "⏸️ Skipping orphan removal (task remains pending)."
         fi
     else
-        echo "No orphaned packages found."
+        echo "✅ No orphaned packages found."
+        LAST_ORPHAN_CLEAN=$CURRENT_TIME
+        STATE_CHANGED=true
     fi
-
-    LAST_WEEKLY=$CURRENT_TIME
-    save_state
-    echo -e "\n✅ Weekly tasks completed.\n"
 else
-    DAYS_LEFT=$(( 7 - (CURRENT_TIME - LAST_WEEKLY) / DAY_IN_SEC ))
-    echo "✅ Weekly tasks are up to date. (Next run in ~$DAYS_LEFT days)"
+    DAYS_LEFT=$(( 7 - (CURRENT_TIME - LAST_ORPHAN_CLEAN) / DAY_IN_SEC ))
+    echo "⏭️ Orphan Cleanup is up to date. (Next run in ~$DAYS_LEFT days)"
 fi
 
-# --- MONTHLY TASKS (Every 30 days) ---
-if (( CURRENT_TIME - LAST_MONTHLY > 30 * DAY_IN_SEC )); then
-    echo "========================================="
-    echo " Running MONTHLY Maintenance Tasks..."
-    echo "========================================="
+# --- 3. CACHE CLEANUP (Monthly) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_CACHE_CLEAN > 30 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Cleaning Package Cache..."
     
-    echo -e "\n[1/3] Cleaning Package Cache..."
-    if command -v paccache &> /dev/null; then
-        sudo paccache -r
-        sudo paccache -ruk0
+    # Prompt the user for this action as it deletes files
+    read -p "Do you want to clean pacman and AUR caches? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if command -v paccache &> /dev/null; then
+            sudo paccache -r
+            sudo paccache -ruk0
+        else
+            echo "paccache not found. Please install pacman-contrib."
+        fi
+        
+        if command -v paru &> /dev/null; then
+            paru -Sc --noconfirm
+        elif command -v yay &> /dev/null; then
+            yay -Sc --noconfirm
+        fi
+        
+        LAST_CACHE_CLEAN=$CURRENT_TIME
+        STATE_CHANGED=true
+        echo "✅ Cache cleaned."
     else
-        echo "paccache not found. To automatically clean caches, please install pacman-contrib:"
-        echo "sudo pacman -S pacman-contrib"
+        echo "⏸️ Skipping cache cleanup (task remains pending)."
     fi
-    
-    if command -v paru &> /dev/null; then
-        paru -Sc --noconfirm
-    elif command -v yay &> /dev/null; then
-        yay -Sc --noconfirm
-    fi
+else
+    DAYS_LEFT=$(( 30 - (CURRENT_TIME - LAST_CACHE_CLEAN) / DAY_IN_SEC ))
+    echo "⏭️ Cache Cleanup is up to date. (Next run in ~$DAYS_LEFT days)"
+fi
 
-    echo -e "\n[2/3] Vacuuming Journald Logs..."
+# --- 4. JOURNAL CLEANUP (Monthly) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_JOURNAL_CLEAN > 30 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Vacuuming Journald Logs..."
     sudo journalctl --vacuum-time=2weeks
+    LAST_JOURNAL_CLEAN=$CURRENT_TIME
+    STATE_CHANGED=true
+    echo "✅ Journal logs vacuumed."
+else
+    DAYS_LEFT=$(( 30 - (CURRENT_TIME - LAST_JOURNAL_CLEAN) / DAY_IN_SEC ))
+    echo "⏭️ Journal Cleanup is up to date. (Next run in ~$DAYS_LEFT days)"
+fi
 
-    echo -e "\n[3/3] Checking for .pacnew and .pacsave files..."
+# --- 5. PACNEW MERGE (Monthly) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_PACNEW_MERGE > 30 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Checking for .pacnew and .pacsave files..."
     PACNEW_FILES=$(sudo find /etc -type f -name "*.pacnew" -o -name "*.pacsave" 2>/dev/null)
     if [ -n "$PACNEW_FILES" ]; then
         echo -e "\n⚠️ Found unmerged configuration files:"
@@ -167,53 +227,68 @@ if (( CURRENT_TIME - LAST_MONTHLY > 30 * DAY_IN_SEC )); then
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             if command -v pacdiff &> /dev/null; then
                 sudo pacdiff
+                # Assume if they ran pacdiff, they handled it
+                LAST_PACNEW_MERGE=$CURRENT_TIME
+                STATE_CHANGED=true
+                echo "✅ Configs checked."
             else
                 echo "pacdiff not found. Please install pacman-contrib."
             fi
+        else
+            echo "⏸️ Skipping pacnew merge (task remains pending)."
         fi
     else
-        echo "No .pacnew or .pacsave files found."
+        echo "✅ No .pacnew or .pacsave files found."
+        LAST_PACNEW_MERGE=$CURRENT_TIME
+        STATE_CHANGED=true
     fi
-
-    LAST_MONTHLY=$CURRENT_TIME
-    save_state
-    echo -e "\n✅ Monthly tasks completed.\n"
 else
-    DAYS_LEFT=$(( 30 - (CURRENT_TIME - LAST_MONTHLY) / DAY_IN_SEC ))
-    echo "✅ Monthly tasks are up to date. (Next run in ~$DAYS_LEFT days)"
+    DAYS_LEFT=$(( 30 - (CURRENT_TIME - LAST_PACNEW_MERGE) / DAY_IN_SEC ))
+    echo "⏭️ Pacnew Merge is up to date. (Next run in ~$DAYS_LEFT days)"
 fi
 
-# --- BI-ANNUAL TASKS (Every 180 days) ---
-if (( CURRENT_TIME - LAST_BIANNUAL > 180 * DAY_IN_SEC )); then
-    echo "========================================="
-    echo " Running BI-ANNUAL Maintenance Tasks..."
-    echo "========================================="
-
-    echo -e "\n[1/2] Updating CachyOS Mirrors..."
+# --- 6. MIRROR UPDATE (Bi-Annual) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_MIRROR_UPDATE > 180 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Updating CachyOS Mirrors..."
     if command -v cachyos-rate-mirrors &> /dev/null; then
         sudo cachyos-rate-mirrors
+        LAST_MIRROR_UPDATE=$CURRENT_TIME
+        STATE_CHANGED=true
+        echo "✅ Mirrors updated."
     else
         echo "cachyos-rate-mirrors not found, skipping..."
     fi
+else
+    DAYS_LEFT=$(( 180 - (CURRENT_TIME - LAST_MIRROR_UPDATE) / DAY_IN_SEC ))
+    echo "⏭️ Mirror Update is up to date. (Next run in ~$DAYS_LEFT days)"
+fi
 
-    echo -e "\n[2/2] Checking BTRFS filesystem for /..."
+# --- 7. BTRFS SCRUB (Bi-Annual) ---
+if $FORCE_MODE || (( CURRENT_TIME - LAST_BTRFS_SCRUB > 180 * DAY_IN_SEC )); then
+    echo -e "\n[Task] Checking BTRFS filesystem for /..."
     FSTYPE=$(df -T / | awk 'NR==2 {print $2}')
     if [ "$FSTYPE" = "btrfs" ]; then
         echo "Starting BTRFS Scrub on /..."
         sudo btrfs scrub start /
         echo "You can check the status in the background with: sudo btrfs scrub status /"
+        LAST_BTRFS_SCRUB=$CURRENT_TIME
+        STATE_CHANGED=true
+        echo "✅ BTRFS Scrub started."
     else
         echo "Root filesystem is not BTRFS ($FSTYPE). Skipping scrub."
+        # Mark as done so it doesn't keep checking non-btrfs systems
+        LAST_BTRFS_SCRUB=$CURRENT_TIME
+        STATE_CHANGED=true
     fi
-
-    LAST_BIANNUAL=$CURRENT_TIME
-    save_state
-    echo -e "\n✅ Bi-Annual tasks completed.\n"
 else
-    DAYS_LEFT=$(( 180 - (CURRENT_TIME - LAST_BIANNUAL) / DAY_IN_SEC ))
-    echo "✅ Bi-Annual tasks are up to date. (Next run in ~$DAYS_LEFT days)"
+    DAYS_LEFT=$(( 180 - (CURRENT_TIME - LAST_BTRFS_SCRUB) / DAY_IN_SEC ))
+    echo "⏭️ BTRFS Scrub is up to date. (Next run in ~$DAYS_LEFT days)"
 fi
 
-echo "========================================="
+if $STATE_CHANGED; then
+    save_state
+fi
+
+echo -e "\n========================================="
 echo "🎉 Maintenance Check Complete!"
 echo "========================================="
